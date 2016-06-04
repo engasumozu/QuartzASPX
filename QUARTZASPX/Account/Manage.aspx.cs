@@ -1,95 +1,121 @@
-﻿using System;
+﻿using Microsoft.AspNet.Identity;
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using WebSite1;
 
-using Microsoft.AspNet.Membership.OpenAuth;
-
-namespace QUARTZASPX.Account
+public partial class Account_Manage : System.Web.UI.Page
 {
-    public partial class Manage : System.Web.UI.Page
+    protected string SuccessMessage
     {
-        protected string SuccessMessage
-        {
-            get;
-            private set;
-        }
+        get;
+        private set;
+    }
 
-        protected bool CanRemoveExternalLogins
-        {
-            get;
-            private set;
-        }
+    protected bool CanRemoveExternalLogins
+    {
+        get;
+        private set;
+    }
 
-        protected void Page_Load()
+    private bool HasPassword(UserManager manager)
+    {
+        var user = manager.FindById(User.Identity.GetUserId());
+        return (user != null && user.PasswordHash != null);
+    }
+
+    protected void Page_Load()
+    {
+        if (!IsPostBack)
         {
-            if (!IsPostBack)
+            // Determine the sections to render
+            UserManager manager = new UserManager();
+            if (HasPassword(manager))
             {
-                // Determine the sections to render
-                var hasLocalPassword = OpenAuth.HasLocalPassword(User.Identity.Name);
-                setPassword.Visible = !hasLocalPassword;
-                changePassword.Visible = hasLocalPassword;
-
-                CanRemoveExternalLogins = hasLocalPassword;
-
-                // Render success message
-                var message = Request.QueryString["m"];
-                if (message != null)
-                {
-                    // Strip the query string from action
-                    Form.Action = ResolveUrl("~/Account/Manage");
-
-                    SuccessMessage =
-                        message == "ChangePwdSuccess" ? "Your password has been changed."
-                        : message == "SetPwdSuccess" ? "Your password has been set."
-                        : message == "RemoveLoginSuccess" ? "The external login was removed."
-                        : String.Empty;
-                    successMessage.Visible = !String.IsNullOrEmpty(SuccessMessage);
-                }
+                changePasswordHolder.Visible = true;
             }
-
-        }
-
-        protected void setPassword_Click(object sender, EventArgs e)
-        {
-            if (IsValid)
+            else
             {
-                var result = OpenAuth.AddLocalPassword(User.Identity.Name, password.Text);
-                if (result.IsSuccessful)
-                {
-                    Response.Redirect("~/Account/Manage?m=SetPwdSuccess");
-                }
-                else
-                {
+                setPassword.Visible = true;
+                changePasswordHolder.Visible = false;
+            }
+            CanRemoveExternalLogins = manager.GetLogins(User.Identity.GetUserId()).Count() > 1;
 
-                    ModelState.AddModelError("NewPassword", result.ErrorMessage);
+            // Render success message
+            var message = Request.QueryString["m"];
+            if (message != null)
+            {
+                // Strip the query string from action
+                Form.Action = ResolveUrl("~/Account/Manage");
 
-                }
+                SuccessMessage =
+                    message == "ChangePwdSuccess" ? "Your password has been changed."
+                    : message == "SetPwdSuccess" ? "Your password has been set."
+                    : message == "RemoveLoginSuccess" ? "The account was removed."
+                    : String.Empty;
+                successMessage.Visible = !String.IsNullOrEmpty(SuccessMessage);
             }
         }
+    }
 
-
-        public IEnumerable<OpenAuthAccountData> GetExternalLogins()
+    protected void ChangePassword_Click(object sender, EventArgs e)
+    {
+        if (IsValid)
         {
-            var accounts = OpenAuth.GetAccountsForUser(User.Identity.Name);
-            CanRemoveExternalLogins = CanRemoveExternalLogins || accounts.Count() > 1;
-            return accounts;
+            UserManager manager = new UserManager();
+            IdentityResult result = manager.ChangePassword(User.Identity.GetUserId(), CurrentPassword.Text, NewPassword.Text);
+            if (result.Succeeded)
+            {
+                Response.Redirect("~/Account/Manage?m=ChangePwdSuccess");
+            }
+            else
+            {
+                AddErrors(result);
+            }
         }
+    }
 
-        public void RemoveExternalLogin(string providerName, string providerUserId)
+    protected void SetPassword_Click(object sender, EventArgs e)
+    {
+        if (IsValid)
         {
-            var m = OpenAuth.DeleteAccount(User.Identity.Name, providerName, providerUserId)
-                ? "?m=RemoveLoginSuccess"
-                : String.Empty;
-            Response.Redirect("~/Account/Manage" + m);
+            // Create the local login info and link the local account to the user
+            UserManager manager = new UserManager();
+            IdentityResult result = manager.AddPassword(User.Identity.GetUserId(), password.Text);
+            if (result.Succeeded)
+            {
+                Response.Redirect("~/Account/Manage?m=SetPwdSuccess");
+            }
+            else
+            {
+                AddErrors(result);
+            }
         }
+    }
 
+    public IEnumerable<UserLoginInfo> GetLogins()
+    {
+        UserManager manager = new UserManager();
+        var accounts = manager.GetLogins(User.Identity.GetUserId());
+        CanRemoveExternalLogins = accounts.Count() > 1 || HasPassword(manager);
+        return accounts;
+    }
 
-        protected static string ConvertToDisplayDateTime(DateTime? utcDateTime)
+    public void RemoveLogin(string loginProvider, string providerKey)
+    {
+        UserManager manager = new UserManager();
+        var result = manager.RemoveLogin(User.Identity.GetUserId(), new UserLoginInfo(loginProvider, providerKey));
+        var msg = result.Succeeded
+            ? "?m=RemoveLoginSuccess"
+            : String.Empty;
+        Response.Redirect("~/Account/Manage" + msg);
+    }
+
+    private void AddErrors(IdentityResult result)
+    {
+        foreach (var error in result.Errors)
         {
-            // You can change this method to convert the UTC date time into the desired display
-            // offset and format. Here we're converting it to the server timezone and formatting
-            // as a short date and a long time string, using the current thread culture.
-            return utcDateTime.HasValue ? utcDateTime.Value.ToLocalTime().ToString("G") : "[never]";
+            ModelState.AddModelError("", error);
         }
     }
 }
